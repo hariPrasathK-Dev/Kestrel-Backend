@@ -15,7 +15,7 @@ const getUsers = asyncHandler(async (req, res) => {
 // PATCH /api/admin/users/:id/role
 const updateUserRole = asyncHandler(async (req, res) => {
     const { role } = req.body;
-    if (!["user", "researcher", "admin"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+    if (!["user", "officer", "admin"].includes(role)) return res.status(400).json({ message: "Invalid role" });
     const user = await User.findByIdAndUpdate(
         req.params.id,
         { role, roleUpgradeRequest: false },

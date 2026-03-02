@@ -37,6 +37,7 @@ app.use("/api/alerts", require("./routes/alertRoutes"));
 app.use("/api/anomalies", require("./routes/anomalyRoutes"));
 app.use("/api/forum", require("./routes/forumRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
+app.use("/api/documents", require("./routes/documentRoutes"));
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => res.json({

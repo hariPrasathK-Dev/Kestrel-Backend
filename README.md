@@ -2,7 +2,7 @@
 
 **Biodiversity Monitoring & Ecological Reporting Platform**
 
-REST API powering the KESTREL platform — built with Node.js, Express 5, and MongoDB. Handles authentication, species reporting with geospatial queries, analytics aggregation, community forum, and admin management.
+REST API powering the KESTREL platform — built with Node.js, Express 5, and MongoDB. Handles authentication, role-based access control, document upload/approval workflow, species reporting with geospatial queries, analytics aggregation, community forum, and admin management.
 
 ---
 
@@ -31,23 +31,35 @@ kestrel-backend/
 │   ├── db.js                 # Mongoose connection
 │   └── env.js                # Centralised env config with fallbacks
 ├── models/
-│   ├── User.js               # Auth, roles, profile, reset tokens
+│   ├── User.js               # Auth, roles (user/officer/admin), profile, reset tokens
+│   ├── Document.js           # Uploaded documents with approval workflow
 │   ├── Species.js            # Master species registry
 │   ├── SpeciesReport.js      # Field reports (GeoJSON 2dsphere index)
 │   ├── Alert.js              # Ecological alerts with user feedback
 │   ├── Anomaly.js            # Detected ecological anomalies
 │   ├── ForumPost.js          # Community forum posts
 │   └── Comment.js            # Post comments
-├── controllers/              # Route logic (8 controllers)
-├── routes/                   # Express routers (8 route files)
+├── controllers/
+│   ├── adminController.js    # User & role management
+│   ├── alertController.js    # Ecological alerts
+│   ├── analyticsController.js # Aggregation queries
+│   ├── anomalyController.js  # Anomaly tracking
+│   ├── authController.js     # Register, login, reset, profile
+│   ├── documentController.js # Document upload, listing, approval
+│   ├── forumController.js    # Forum CRUD + comments
+│   ├── reportController.js   # Species reports + CSV bulk upload
+│   ├── speciesController.js  # Species master list CRUD
+│   └── userController.js     # User utilities
+├── routes/                   # Express routers (10 route files)
 ├── middlewares/
 │   ├── authMiddleware.js     # JWT protect
 │   ├── roleGuard.js          # requireRole() factory
-│   ├── upload.js             # Multer – images & CSV
+│   ├── upload.js             # Multer – images, docs & CSV
 │   ├── rateLimiter.js        # Global & auth-specific limits
 │   └── errorHandler.js       # 404 + global error handler
 ├── services/
 │   └── emailService.js       # Nodemailer password reset emails
+├── uploads/                  # Persisted uploaded files (served statically)
 └── utils/
     ├── asyncHandler.js       # Async route wrapper
     └── apiResponse.js        # Consistent response helpers
@@ -131,14 +143,7 @@ Authorization: Bearer <JWT_TOKEN>
 | `POST` | `/auth/forgot-password` | ❌ | Request password reset email |
 | `POST` | `/auth/reset-password` | ❌ | Reset password via token |
 | `PUT` | `/auth/profile` | ✅ | Update profile + avatar |
-| `POST` | `/auth/request-role-upgrade` | ✅ | Request Researcher role |
-
-**Register Example**
-```bash
-curl -X POST http://localhost:3001/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Jane Smith","email":"jane@eco.org","password":"secure123","organization":"Wildlife Trust"}'
-```
+| `POST` | `/auth/request-role-upgrade` | ✅ | Request Officer role upgrade |
 
 ---
 
@@ -148,7 +153,7 @@ curl -X POST http://localhost:3001/api/auth/register \
 |--------|----------|:----:|-------------|
 | `GET` | `/species` | ❌ | List all species (filter: `category`, `status`, `search`) |
 | `GET` | `/species/:id` | ❌ | Get species by ID |
-| `POST` | `/species` | ✅ Researcher+ | Create species |
+| `POST` | `/species` | ✅ Officer+ | Create species |
 | `PUT` | `/species/:id` | ✅ Admin | Update species |
 | `DELETE` | `/species/:id` | ✅ Admin | Delete species |
 
@@ -158,9 +163,9 @@ curl -X POST http://localhost:3001/api/auth/register \
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|:----:|-------------|
-| `GET` | `/reports` | ✅ | List reports (filter: `status`, `riskLevel`) |
+| `GET` | `/reports` | ✅ | List reports (role-filtered; users see own + approved) |
 | `GET` | `/reports/:id` | ✅ | Get single report |
-| `GET` | `/reports/map` | ✅ | All approved reports with coordinates (for map) |
+| `GET` | `/reports/map` | ✅ | All approved reports with coordinates (for map/heatmap) |
 | `POST` | `/reports` | ✅ | Submit species report (multipart, image optional) |
 | `POST` | `/reports/bulk-csv` | ✅ | Bulk upload via CSV |
 | `PATCH` | `/reports/:id/status` | ✅ Admin | Approve / Reject report |
@@ -173,11 +178,39 @@ Bengal Tiger,21.5,80.3,Central India,Forest,Visual,2,High,Pair spotted near wate
 
 ---
 
+### Documents Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|:----:|-------------|
+| `POST` | `/documents` | ✅ Officer+ | Upload a document (PDF, CSV, image, doc) |
+| `GET` | `/documents` | ✅ | List documents (role-filtered — see table below) |
+| `GET` | `/documents/:id` | ✅ | Get single document |
+| `PATCH` | `/documents/:id/status` | ✅ Admin | Approve / Reject document |
+| `DELETE` | `/documents/:id` | ✅ Owner/Admin | Delete document |
+
+**Role-filtered listing:**
+
+| Role | Can See |
+|------|---------|
+| `admin` | All documents (filter by `?status=pending/approved/rejected`) |
+| `officer` | Own uploads (all statuses) |
+| `user` | Approved documents only |
+
+**Upload Request** (multipart/form-data)
+```
+file        – required, the file to upload
+title       – required, display name
+description – optional
+tags        – optional, comma-separated (e.g. "tiger,survey,2024")
+```
+
+---
+
 ### Analytics Endpoints
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|:----:|-------------|
-| `GET` | `/analytics/species-count` | ❌ | Top 15 reported species |
+| `GET` | `/analytics/species-count` | ❌ | Top 15 reported species (used for animal-wise table) |
 | `GET` | `/analytics/monthly-trends` | ❌ | Monthly submissions by status (`?year=2025`) |
 | `GET` | `/analytics/region-summary` | ❌ | Top 10 regions by report count |
 | `GET` | `/analytics/comparison` | ❌ | Platform-wide totals + conservation & habitat breakdown |
@@ -218,9 +251,9 @@ Bengal Tiger,21.5,80.3,Central India,Forest,Visual,2,High,Pair spotted near wate
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/admin/users` | List all users |
-| `PATCH` | `/admin/users/:id/role` | Change user role |
-| `GET` | `/admin/role-requests` | Pending researcher upgrade requests |
+| `GET` | `/admin/users` | List all users (filter: `?role=`) |
+| `PATCH` | `/admin/users/:id/role` | Change user role (`user` / `officer` / `admin`) |
+| `GET` | `/admin/role-requests` | Pending officer role upgrade requests |
 | `PATCH` | `/admin/users/:id/toggle-active` | Activate / deactivate user |
 | `GET` | `/admin/activity` | Recent platform activity |
 
@@ -239,9 +272,9 @@ curl http://localhost:3001/api/health
 
 | Role | Permissions |
 |------|-------------|
-| `user` | Submit reports, view approved data, post in forum |
-| `researcher` | All user permissions + create species entries |
-| `admin` | Full platform access – approve reports, manage users, alerts, species |
+| `user` | Submit reports, view approved docs & data, post in forum, add reports |
+| `officer` | All user permissions + upload documents, bulk CSV upload, manage own submissions |
+| `admin` | Full access — approve/reject reports & documents, manage users & roles, alerts, species CRUD |
 
 ---
 
@@ -253,7 +286,7 @@ curl http://localhost:3001/api/health
 - Global rate limit: 200 req / 15 min
 - Auth rate limit: 20 req / 15 min
 - File upload size limit: 5 MB
-- Images only (JPEG, PNG, GIF, WebP)
+- Accepted MIME types: images (JPEG, PNG, GIF, WebP), PDF, CSV, Word documents, plain text
 - Helmet-compatible CORS configuration
 
 ---
