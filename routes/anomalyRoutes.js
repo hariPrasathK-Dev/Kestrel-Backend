@@ -6,7 +6,7 @@ const { requireRole } = require("../middlewares/roleGuard");
 
 router.get("/", protect, getAnomalies);
 router.post("/", protect, createAnomaly);
-router.patch("/:id/review", protect, requireRole("admin"), reviewAnomaly);
+router.patch("/:id/review", protect, requireRole("officer", "admin"), reviewAnomaly);
 router.delete("/:id", protect, requireRole("admin"), deleteAnomaly);
 
 module.exports = router;
