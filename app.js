@@ -42,6 +42,7 @@ app.use("/api/regions", require("./routes/regionRoutes"));
 app.use("/api/surveys", require("./routes/surveyRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
 app.use("/api/conservation", require("./routes/conservationRoutes"));
+app.use("/api/llm", require("./routes/llmRoutes"));
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => res.json({
