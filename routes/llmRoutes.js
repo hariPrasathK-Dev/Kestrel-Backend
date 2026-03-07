@@ -1,15 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const {
-    saveConfig,
-    getConfig,
-    uploadDocument,
-    getDocuments,
-    deleteDocument,
-    askQuestion,
-    getConversations,
-    getConversation,
-    deleteConversation,
+  saveConfig,
+  getConfig,
+  uploadDocument,
+  getDocuments,
+  deleteDocument,
+  askQuestion,
+  getConversations,
+  getConversation,
+  deleteConversation,
 } = require("../controllers/llmController");
 const { protect } = require("../middlewares/authMiddleware");
 const upload = require("../middlewares/upload");

@@ -16,10 +16,12 @@ connectDB();
 const app = express();
 
 // ─── Core Middleware ─────────────────────────────────────────────────────────
-app.use(cors({
+app.use(
+  cors({
     origin: process.env.CLIENT_URL || "http://localhost:3000",
     credentials: true,
-}));
+  }),
+);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
@@ -45,11 +47,13 @@ app.use("/api/conservation", require("./routes/conservationRoutes"));
 app.use("/api/llm", require("./routes/llmRoutes"));
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
-app.get("/api/health", (req, res) => res.json({
+app.get("/api/health", (req, res) =>
+  res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || "development",
-}));
+  }),
+);
 
 // ─── Error Handling ───────────────────────────────────────────────────────────
 app.use(notFound);
@@ -57,5 +61,5 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`🦅 KESTREL API running on http://localhost:${PORT}`);
+  console.log(`🦅 KESTREL API running on http://localhost:${PORT}`);
 });
