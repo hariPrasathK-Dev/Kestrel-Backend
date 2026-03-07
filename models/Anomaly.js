@@ -11,6 +11,7 @@ const anomalySchema = new mongoose.Schema(
         severity: { type: String, enum: ["Low", "Medium", "High", "Critical"], default: "Medium" },
         description: { type: String, default: "" },
         detectedAt: { type: Date, default: Date.now },
+        detectionMethod: { type: String, enum: ["manual", "automated"], default: "manual" },
         status: { type: String, enum: ["open", "under_review", "resolved"], default: "open" },
         reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         reviewNotes: { type: String, default: "" },
