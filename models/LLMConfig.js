@@ -11,8 +11,8 @@ const llmConfigSchema = new mongoose.Schema(
         },
         model: {
             type: String,
-            enum: ["llama3-8b-8192", "mixtral-8x7b-32768", "gemma-7b-it"],
-            default: "llama3-8b-8192",
+            enum: ["llama-3.1-8b-instant", "llama-3.1-70b-versatile", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"],
+            default: "llama-3.1-8b-instant",
         },
         encryptedApiKey: { type: String, required: true },
         isActive: { type: Boolean, default: true },
