@@ -9,10 +9,11 @@ const fs = require("fs").promises;
 // Groq API integration
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-// Model configurations - Updated with correct Groq API model IDs
+// Model configurations - Groq API model IDs (verified working)
 const GROQ_MODELS = {
     "llama-3.1-8b-instant": { name: "LLaMA 3.1 8B (Fastest)", context: 8192 },
-    "llama-3.3-70b-versatile": { name: "LLaMA 3.3 70B (Best)", context: 8192 },
+    "llama-3.1-70b-versatile": { name: "LLaMA 3.1 70B (Best)", context: 8192 },
+    "llama3-8b-8192": { name: "LLaMA 3 8B", context: 8192 },
     "mixtral-8x7b-32768": { name: "Mixtral 8x7B", context: 32768 },
     "gemma2-9b-it": { name: "Gemma 2 9B", context: 8192 },
 };
@@ -39,16 +40,26 @@ const saveConfig = asyncHandler(async (req, res) => {
             },
             body: JSON.stringify({
                 model: model,
-                messages: [{ role: "user", content: "Hello" }],
-                max_tokens: 10,
+                messages: [{ role: "user", content: "test" }],
+                max_tokens: 5,
             }),
         });
 
         if (!testResponse.ok) {
-            return res.status(401).json({ message: "Invalid API key or model" });
+            const errorData = await testResponse.json().catch(() => ({}));
+            const errorMessage = errorData.error?.message || errorData.message || "Invalid API key or model";
+            console.error("Groq API validation error:", errorMessage);
+            return res.status(401).json({ message: errorMessage });
+        }
+
+        // Verify response is valid
+        const responseData = await testResponse.json();
+        if (!responseData.choices || !responseData.choices[0]) {
+            return res.status(500).json({ message: "Invalid response from Groq API" });
         }
     } catch (error) {
-        return res.status(500).json({ message: "Failed to validate API key" });
+        console.error("Groq API validation exception:", error);
+        return res.status(500).json({ message: error.message || "Failed to connect to Groq API" });
     }
 
     // Save or update config
