@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const dotenv = require("dotenv");
 const path = require("path");
 const { connectDB } = require("./config/db");
+const { initPinecone } = require("./config/pinecone");
 const { notFound, errorHandler } = require("./middlewares/errorHandler");
 const { globalLimiter } = require("./middlewares/rateLimiter");
 
@@ -12,6 +13,9 @@ dotenv.config();
 
 // Connect DB
 connectDB();
+
+// Initialize Pinecone
+initPinecone();
 
 const app = express();
 

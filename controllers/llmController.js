@@ -13,18 +13,20 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const generateEmbedding = (text, vocabulary = null) => {
   const words = text.toLowerCase().match(/\b\w+\b/g) || [];
   const wordFreq = {};
-  
-  words.forEach(word => {
+
+  words.forEach((word) => {
     wordFreq[word] = (wordFreq[word] || 0) + 1;
   });
-  
+
   // If vocabulary is provided (for query), use it; otherwise create from text
   const vocab = vocabulary || Object.keys(wordFreq);
-  const embedding = vocab.map(word => wordFreq[word] || 0);
-  
+  const embedding = vocab.map((word) => wordFreq[word] || 0);
+
   // Normalize the vector
-  const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
-  return embedding.map(val => magnitude > 0 ? val / magnitude : 0);
+  const magnitude = Math.sqrt(
+    embedding.reduce((sum, val) => sum + val * val, 0),
+  );
+  return embedding.map((val) => (magnitude > 0 ? val / magnitude : 0));
 };
 
 // Helper function: Calculate cosine similarity between two vectors
@@ -33,16 +35,16 @@ const cosineSimilarity = (vec1, vec2) => {
   let dotProduct = 0;
   let mag1 = 0;
   let mag2 = 0;
-  
+
   for (let i = 0; i < minLength; i++) {
     dotProduct += vec1[i] * vec2[i];
     mag1 += vec1[i] * vec1[i];
     mag2 += vec2[i] * vec2[i];
   }
-  
+
   mag1 = Math.sqrt(mag1);
   mag2 = Math.sqrt(mag2);
-  
+
   if (mag1 === 0 || mag2 === 0) return 0;
   return dotProduct / (mag1 * mag2);
 };
@@ -199,17 +201,19 @@ const uploadDocument = asyncHandler(async (req, res) => {
   const chunks = [];
 
   // Build global vocabulary from entire document for consistent embeddings
-  const globalVocab = [...new Set(content.toLowerCase().match(/\b\w+\b/g) || [])];
+  const globalVocab = [
+    ...new Set(content.toLowerCase().match(/\b\w+\b/g) || []),
+  ];
 
-  for (let i = 0; i < words.length; i += (chunkSize - overlapSize)) {
+  for (let i = 0; i < words.length; i += chunkSize - overlapSize) {
     const chunkWords = words.slice(i, i + chunkSize);
     const chunkText = chunkWords.join(" ");
-    
+
     // Only add non-empty chunks
     if (chunkText.trim().length > 0) {
       // Generate embedding for this chunk
       const embedding = generateEmbedding(chunkText, globalVocab);
-      
+
       chunks.push({
         text: chunkText,
         chunkIndex: chunks.length,
@@ -218,7 +222,7 @@ const uploadDocument = asyncHandler(async (req, res) => {
         embedding: embedding,
       });
     }
-    
+
     // Break if we've processed all words
     if (i + chunkSize >= words.length) break;
   }
@@ -288,11 +292,9 @@ const askQuestion = asyncHandler(async (req, res) => {
   // Get user's LLM config
   const config = await LLMConfig.findOne({ userId: req.user._id });
   if (!config) {
-    return res
-      .status(400)
-      .json({
-        message: "LLM not configured. Please set up your API key first.",
-      });
+    return res.status(400).json({
+      message: "LLM not configured. Please set up your API key first.",
+    });
   }
 
   const apiKey = config.getApiKey();
@@ -317,7 +319,9 @@ const askQuestion = asyncHandler(async (req, res) => {
 
   // Get user profile for personalized context
   const User = require("../models/User");
-  const userProfile = await User.findById(req.user._id).select("name role organization bio");
+  const userProfile = await User.findById(req.user._id).select(
+    "name role organization bio",
+  );
 
   // Build context from document if provided
   let contextText = "";
@@ -330,64 +334,73 @@ const askQuestion = asyncHandler(async (req, res) => {
     if (document && document.status === "ready") {
       // Use semantic vector search with cosine similarity
       // Build vocabulary from all chunks for consistent embedding
-      const allText = document.chunks.map(c => c.text).join(" ");
-      const globalVocab = [...new Set(allText.toLowerCase().match(/\b\w+\b/g) || [])];
-      
+      const allText = document.chunks.map((c) => c.text).join(" ");
+      const globalVocab = [
+        ...new Set(allText.toLowerCase().match(/\b\w+\b/g) || []),
+      ];
+
       // Generate embedding for the user's question
       const questionEmbedding = generateEmbedding(question, globalVocab);
-      
+
       // Calculate similarity scores for all chunks
-      const chunksWithScores = document.chunks.map(chunk => {
-        const chunkEmbedding = chunk.embedding && chunk.embedding.length > 0
-          ? chunk.embedding
-          : generateEmbedding(chunk.text, globalVocab); // Fallback for old chunks without embeddings
-        
+      const chunksWithScores = document.chunks.map((chunk) => {
+        const chunkEmbedding =
+          chunk.embedding && chunk.embedding.length > 0
+            ? chunk.embedding
+            : generateEmbedding(chunk.text, globalVocab); // Fallback for old chunks without embeddings
+
         const similarity = cosineSimilarity(questionEmbedding, chunkEmbedding);
-        
+
         return {
           text: chunk.text,
           similarity: similarity,
           chunkIndex: chunk.chunkIndex,
         };
       });
-      
+
       // Sort by similarity and take top 3 most relevant chunks
       const relevantChunks = chunksWithScores
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 3)
-        .filter(chunk => chunk.similarity > 0.1); // Only include chunks with meaningful similarity
-      
+        .filter((chunk) => chunk.similarity > 0.1); // Only include chunks with meaningful similarity
+
       contextText = relevantChunks.map((c) => c.text).join("\n\n");
-      
+
       // Log similarity scores for debugging
-      console.log("Top chunk similarities:", relevantChunks.map(c => ({
-        index: c.chunkIndex,
-        similarity: c.similarity.toFixed(3)
-      })));
+      console.log(
+        "Top chunk similarities:",
+        relevantChunks.map((c) => ({
+          index: c.chunkIndex,
+          similarity: c.similarity.toFixed(3),
+        })),
+      );
     }
   }
 
   // Build personalized system prompt based on user profile
   const roleExpertise = {
-    admin: "an administrator with full system access and oversight responsibilities",
-    officer: "a conservation officer with field expertise and research coordination duties",
-    user: "a researcher or citizen scientist contributing to biodiversity monitoring"
+    admin:
+      "an administrator with full system access and oversight responsibilities",
+    officer:
+      "a conservation officer with field expertise and research coordination duties",
+    user: "a researcher or citizen scientist contributing to biodiversity monitoring",
   };
 
-  const expertiseLevel = userProfile.role === "admin" || userProfile.role === "officer" 
-    ? "advanced technical knowledge" 
-    : "varying levels of expertise";
+  const expertiseLevel =
+    userProfile.role === "admin" || userProfile.role === "officer"
+      ? "advanced technical knowledge"
+      : "varying levels of expertise";
 
   let systemPrompt = `You are an expert biodiversity AI assistant talking to ${userProfile.name}, ${roleExpertise[userProfile.role] || "a biodiversity enthusiast"}.`;
-  
+
   if (userProfile.organization) {
     systemPrompt += ` They work with ${userProfile.organization}.`;
   }
-  
+
   if (userProfile.bio) {
     systemPrompt += ` User background: ${userProfile.bio}.`;
   }
-  
+
   systemPrompt += ` Tailor your explanations to their ${expertiseLevel} and organizational context. Be precise with scientific terminology when appropriate, but ensure clarity.`;
 
   if (contextText) {

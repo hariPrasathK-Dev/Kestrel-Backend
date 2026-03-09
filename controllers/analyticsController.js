@@ -200,18 +200,21 @@ const getHeatmapData = asyncHandler(async (req, res) => {
   reports.forEach((r) => {
     const [lng, lat] = r.location.coordinates;
     const gridKey = getGridKey(lat, lng);
-    
+
     if (!gridCells[gridKey]) {
       gridCells[gridKey] = {
-        lat: Math.floor(lat / gridPrecision) * gridPrecision + gridPrecision / 2,
-        lng: Math.floor(lng / gridPrecision) * gridPrecision + gridPrecision / 2,
+        lat:
+          Math.floor(lat / gridPrecision) * gridPrecision + gridPrecision / 2,
+        lng:
+          Math.floor(lng / gridPrecision) * gridPrecision + gridPrecision / 2,
         intensity: 0,
         count: 0,
         reports: [],
       };
     }
-    
-    const intensity = (riskWeight[r.riskLevel] || 1) * (r.numberOfIndividuals || 1);
+
+    const intensity =
+      (riskWeight[r.riskLevel] || 1) * (r.numberOfIndividuals || 1);
     gridCells[gridKey].intensity += intensity;
     gridCells[gridKey].count += 1;
     gridCells[gridKey].reports.push({
