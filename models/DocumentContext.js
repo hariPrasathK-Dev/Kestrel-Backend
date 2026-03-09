@@ -14,15 +14,8 @@ const documentContextSchema = new mongoose.Schema(
       enum: ["pdf", "txt", "csv", "doc"],
       required: true,
     },
-    chunks: [
-      {
-        text: { type: String, required: true },
-        chunkIndex: { type: Number, required: true },
-        startWordIndex: { type: Number },
-        endWordIndex: { type: Number },
-        embedding: { type: [Number], default: [] }, // Vector embedding for semantic search
-      },
-    ],
+    // Chunks are now stored in Pinecone vector database
+    // This model only tracks metadata
     totalChunks: { type: Number, default: 0 },
     status: {
       type: String,

@@ -5,28 +5,52 @@ const asyncHandler = require("../utils/asyncHandler");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs").promises;
+const { getPineconeIndex } = require("../config/pinecone");
 
-// Groq API integration
+// API URLs
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 
-// Helper function: Simple TF-IDF based embedding generation
-const generateEmbedding = (text, vocabulary = null) => {
-  const words = text.toLowerCase().match(/\b\w+\b/g) || [];
-  const wordFreq = {};
+/**
+ * Generate embeddings using OpenAI API
+ * @param {string|string[]} input - Text or array of texts to embed
+ * @returns {Promise<number[]|number[][]>} Embedding vector(s)
+ */
+const generateOpenAIEmbedding = async (input) => {
+  if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your_openai_api_key_here') {
+    throw new Error("OPENAI_API_KEY is not configured in environment variables");
+  }
 
-  words.forEach((word) => {
-    wordFreq[word] = (wordFreq[word] || 0) + 1;
-  });
+  try {
+    const response = await fetch(OPENAI_EMBEDDINGS_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "text-embedding-3-small", // 1536 dimensions, cost-effective
+        input: input,
+      }),
+    });
 
-  // If vocabulary is provided (for query), use it; otherwise create from text
-  const vocab = vocabulary || Object.keys(wordFreq);
-  const embedding = vocab.map((word) => wordFreq[word] || 0);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error?.message || "OpenAI embeddings API error");
+    }
 
-  // Normalize the vector
-  const magnitude = Math.sqrt(
-    embedding.reduce((sum, val) => sum + val * val, 0),
-  );
-  return embedding.map((val) => (magnitude > 0 ? val / magnitude : 0));
+    const data = await response.json();
+    
+    // Return single vector or array of vectors
+    if (Array.isArray(input)) {
+      return data.data.map(item => item.embedding);
+    } else {
+      return data.data[0].embedding;
+    }
+  } catch (error) {
+    console.error("Embedding generation error:", error.message);
+    throw error;
+  }
 };
 
 // Helper function: Calculate cosine similarity between two vectors
@@ -194,59 +218,82 @@ const uploadDocument = asyncHandler(async (req, res) => {
     return res.status(500).json({ message: "Failed to read file" });
   }
 
-  // Chunk the content with overlapping windows for better context preservation
-  const words = content.split(/\s+/);
-  const chunkSize = 500;
-  const overlapSize = 100; // 100-word overlap between chunks
-  const chunks = [];
-
-  // Build global vocabulary from entire document for consistent embeddings
-  const globalVocab = [
-    ...new Set(content.toLowerCase().match(/\b\w+\b/g) || []),
-  ];
-
-  for (let i = 0; i < words.length; i += chunkSize - overlapSize) {
-    const chunkWords = words.slice(i, i + chunkSize);
-    const chunkText = chunkWords.join(" ");
-
-    // Only add non-empty chunks
-    if (chunkText.trim().length > 0) {
-      // Generate embedding for this chunk
-      const embedding = generateEmbedding(chunkText, globalVocab);
-
-      chunks.push({
-        text: chunkText,
-        chunkIndex: chunks.length,
-        startWordIndex: i,
-        endWordIndex: i + chunkWords.length,
-        embedding: embedding,
-      });
-    }
-
-    // Break if we've processed all words
-    if (i + chunkSize >= words.length) break;
-  }
-
-  // Save to database
+  // First, create document record in MongoDB (without chunks)
   const document = await DocumentContext.create({
     userId: req.user._id,
     fileName: originalname,
     fileUrl: `/uploads/${path.basename(filePath)}`,
     fileType,
-    chunks,
-    totalChunks: chunks.length,
-    status: "ready",
+    totalChunks: 0,
+    status: "processing",
   });
 
-  res.json({
-    message: "Document processed successfully",
-    document: {
-      _id: document._id,
-      fileName: document.fileName,
-      totalChunks: document.totalChunks,
-      status: document.status,
-    },
-  });
+  try {
+    // Chunk the content with overlapping windows for better context preservation
+    const words = content.split(/\s+/);
+    const chunkSize = 500;
+    const overlapSize = 100; // 100-word overlap between chunks
+    const chunkTexts = [];
+
+    for (let i = 0; i < words.length; i += chunkSize - overlapSize) {
+      const chunkWords = words.slice(i, i + chunkSize);
+      const chunkText = chunkWords.join(" ");
+
+      // Only add non-empty chunks
+      if (chunkText.trim().length > 0) {
+        chunkTexts.push(chunkText);
+      }
+
+      // Break if we've processed all words
+      if (i + chunkSize >= words.length) break;
+    }
+
+    // Generate embeddings for all chunks using OpenAI API
+    console.log(`Generating embeddings for ${chunkTexts.length} chunks...`);
+    const embeddings = await generateOpenAIEmbedding(chunkTexts);
+
+    // Prepare vectors for Pinecone upsert
+    const pineconeIndex = getPineconeIndex();
+    const vectors = chunkTexts.map((text, index) => ({
+      id: `${document._id}_chunk_${index}`,
+      values: embeddings[index],
+      metadata: {
+        documentId: document._id.toString(),
+        fileName: originalname,
+        chunkIndex: index,
+        text: text,
+        userId: req.user._id.toString(),
+      },
+    }));
+
+    // Upsert vectors to Pinecone
+    console.log(`Upserting ${vectors.length} vectors to Pinecone...`);
+    await pineconeIndex.upsert(vectors);
+
+    // Update document status
+    document.totalChunks = chunkTexts.length;
+    document.status = "ready";
+    await document.save();
+
+    console.log(`✅ Document "${originalname}" processed: ${chunkTexts.length} chunks → Pinecone`);
+
+    res.json({
+      message: "Document processed successfully",
+      document: {
+        _id: document._id,
+        fileName: document.fileName,
+        totalChunks: document.totalChunks,
+        status: document.status,
+      },
+    });
+  } catch (error) {
+    // Update document status to failed
+    document.status = "failed";
+    await document.save();
+    
+    console.error("Document processing error:", error.message);
+    throw new Error(`Failed to process document: ${error.message}`);
+  }
 });
 
 // GET /api/llm/documents - List user's documents
