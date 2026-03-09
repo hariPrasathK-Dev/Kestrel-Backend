@@ -53,26 +53,6 @@ const generateOpenAIEmbedding = async (input) => {
   }
 };
 
-// Helper function: Calculate cosine similarity between two vectors
-const cosineSimilarity = (vec1, vec2) => {
-  const minLength = Math.min(vec1.length, vec2.length);
-  let dotProduct = 0;
-  let mag1 = 0;
-  let mag2 = 0;
-
-  for (let i = 0; i < minLength; i++) {
-    dotProduct += vec1[i] * vec2[i];
-    mag1 += vec1[i] * vec1[i];
-    mag2 += vec2[i] * vec2[i];
-  }
-
-  mag1 = Math.sqrt(mag1);
-  mag2 = Math.sqrt(mag2);
-
-  if (mag1 === 0 || mag2 === 0) return 0;
-  return dotProduct / (mag1 * mag2);
-};
-
 // Model configurations - Official Groq Production Models (as of March 2026)
 const GROQ_MODELS = {
   "llama-3.1-8b-instant": {
@@ -379,48 +359,54 @@ const askQuestion = asyncHandler(async (req, res) => {
     });
 
     if (document && document.status === "ready") {
-      // Use semantic vector search with cosine similarity
-      // Build vocabulary from all chunks for consistent embedding
-      const allText = document.chunks.map((c) => c.text).join(" ");
-      const globalVocab = [
-        ...new Set(allText.toLowerCase().match(/\b\w+\b/g) || []),
-      ];
+      try {
+        // Generate embedding for the user's question using OpenAI
+        console.log("Generating question embedding...");
+        const questionEmbedding = await generateOpenAIEmbedding(question);
 
-      // Generate embedding for the user's question
-      const questionEmbedding = generateEmbedding(question, globalVocab);
-
-      // Calculate similarity scores for all chunks
-      const chunksWithScores = document.chunks.map((chunk) => {
-        const chunkEmbedding =
-          chunk.embedding && chunk.embedding.length > 0
-            ? chunk.embedding
-            : generateEmbedding(chunk.text, globalVocab); // Fallback for old chunks without embeddings
-
-        const similarity = cosineSimilarity(questionEmbedding, chunkEmbedding);
-
-        return {
-          text: chunk.text,
-          similarity: similarity,
-          chunkIndex: chunk.chunkIndex,
+        // Query Pinecone for most relevant chunks
+        const pineconeIndex = getPineconeIndex();
+        
+        // Build query with metadata filter for specific document
+        const queryRequest = {
+          vector: questionEmbedding,
+          topK: 3,
+          includeMetadata: true,
+          filter: {
+            documentId: { $eq: documentId },
+          },
         };
-      });
 
-      // Sort by similarity and take top 3 most relevant chunks
-      const relevantChunks = chunksWithScores
-        .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, 3)
-        .filter((chunk) => chunk.similarity > 0.1); // Only include chunks with meaningful similarity
+        console.log(`Querying Pinecone for document ${documentId}...`);
+        const queryResponse = await pineconeIndex.query(queryRequest);
 
-      contextText = relevantChunks.map((c) => c.text).join("\n\n");
+        // Extract text from matches
+        if (queryResponse.matches && queryResponse.matches.length > 0) {
+          const relevantChunks = queryResponse.matches
+            .filter((match) => match.score > 0.5) // Only use chunks with decent similarity
+            .map((match) => ({
+              text: match.metadata.text,
+              score: match.score,
+              chunkIndex: match.metadata.chunkIndex,
+            }));
 
-      // Log similarity scores for debugging
-      console.log(
-        "Top chunk similarities:",
-        relevantChunks.map((c) => ({
-          index: c.chunkIndex,
-          similarity: c.similarity.toFixed(3),
-        })),
-      );
+          contextText = relevantChunks.map((c) => c.text).join("\n\n");
+
+          // Log similarity scores for debugging
+          console.log(
+            "Top Pinecone matches:",
+            relevantChunks.map((c) => ({
+              index: c.chunkIndex,
+              score: c.score.toFixed(3),
+            })),
+          );
+        } else {
+          console.log("No relevant chunks found in Pinecone");
+        }
+      } catch (error) {
+        console.error("Pinecone query error:", error.message);
+        // Continue without context if Pinecone query fails
+      }
     }
   }
 
