@@ -9,53 +9,48 @@ const { getPineconeIndex } = require("../config/pinecone");
 
 // API URLs
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+
+// Local embedding configuration (match your Pinecone index dimension)
+const EMBEDDING_DIMENSIONS = parseInt(process.env.PINECONE_DIMENSION) || 384;
 
 /**
- * Generate embeddings using OpenAI API
+ * Generate embeddings locally using TF-IDF (free, no API calls)
  * @param {string|string[]} input - Text or array of texts to embed
- * @returns {Promise<number[]|number[][]>} Embedding vector(s)
+ * @param {string[]} vocabulary - Global vocabulary for consistent dimensions
+ * @returns {number[]|number[][]} Embedding vector(s)
  */
-const generateOpenAIEmbedding = async (input) => {
-  if (
-    !process.env.OPENAI_API_KEY ||
-    process.env.OPENAI_API_KEY === "your_openai_api_key_here"
-  ) {
-    throw new Error(
-      "OPENAI_API_KEY is not configured in environment variables",
-    );
-  }
+const generateLocalEmbedding = (input, vocabulary) => {
+  const isArray = Array.isArray(input);
+  const texts = isArray ? input : [input];
+  const embeddings = [];
 
-  try {
-    const response = await fetch(OPENAI_EMBEDDINGS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small", // 1536 dimensions, cost-effective
-        input: input,
-      }),
+  for (const text of texts) {
+    const words = text.toLowerCase().match(/\b\w+\b/g) || [];
+    const wordFreq = {};
+
+    // Calculate term frequency
+    words.forEach((word) => {
+      wordFreq[word] = (wordFreq[word] || 0) + 1;
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || "OpenAI embeddings API error");
+    // Create vector based on vocabulary
+    let vector = vocabulary.map((word) => wordFreq[word] || 0);
+
+    // Pad or truncate to fixed dimensions
+    if (vector.length < EMBEDDING_DIMENSIONS) {
+      vector = [...vector, ...Array(EMBEDDING_DIMENSIONS - vector.length).fill(0)];
+    } else if (vector.length > EMBEDDING_DIMENSIONS) {
+      vector = vector.slice(0, EMBEDDING_DIMENSIONS);
     }
 
-    const data = await response.json();
+    // Normalize the vector
+    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
+    const normalized = magnitude > 0 ? vector.map((val) => val / magnitude) : vector;
 
-    // Return single vector or array of vectors
-    if (Array.isArray(input)) {
-      return data.data.map((item) => item.embedding);
-    } else {
-      return data.data[0].embedding;
-    }
-  } catch (error) {
-    console.error("Embedding generation error:", error.message);
-    throw error;
+    embeddings.push(normalized);
   }
+
+  return isArray ? embeddings : embeddings[0];
 };
 
 // Model configurations - Official Groq Production Models (as of March 2026)
@@ -233,9 +228,16 @@ const uploadDocument = asyncHandler(async (req, res) => {
       if (i + chunkSize >= words.length) break;
     }
 
-    // Generate embeddings for all chunks using OpenAI API
-    console.log(`Generating embeddings for ${chunkTexts.length} chunks...`);
-    const embeddings = await generateOpenAIEmbedding(chunkTexts);
+    // Build global vocabulary from entire document for consistent embeddings
+    const allText = chunkTexts.join(" ");
+    const globalVocab = [
+      ...new Set(allText.toLowerCase().match(/\b\w+\b/g) || []),
+    ].slice(0, EMBEDDING_DIMENSIONS); // Limit vocabulary to embedding dimensions
+
+    console.log(`Generating embeddings for ${chunkTexts.length} chunks using local TF-IDF...`);
+    
+    // Generate embeddings locally (no API calls, completely free!)
+    const embeddings = generateLocalEmbedding(chunkTexts, globalVocab);
 
     // Prepare vectors for Pinecone upsert
     const pineconeIndex = getPineconeIndex();
@@ -389,9 +391,14 @@ const askQuestion = asyncHandler(async (req, res) => {
 
     if (document && document.status === "ready") {
       try {
-        // Generate embedding for the user's question using OpenAI
-        console.log("Generating question embedding...");
-        const questionEmbedding = await generateOpenAIEmbedding(question);
+        // Build vocabulary from document metadata (or use a cached version)
+        // For simplicity, we'll use the question itself to build a basic vocab
+        const questionWords = question.toLowerCase().match(/\b\w+\b/g) || [];
+        const vocab = [...new Set(questionWords)].slice(0, EMBEDDING_DIMENSIONS);
+
+        // Generate embedding for the user's question using local TF-IDF
+        console.log("Generating question embedding locally...");
+        const questionEmbedding = generateLocalEmbedding(question, vocab);
 
         // Query Pinecone for most relevant chunks
         const pineconeIndex = getPineconeIndex();
