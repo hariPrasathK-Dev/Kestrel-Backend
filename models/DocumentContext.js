@@ -18,7 +18,9 @@ const documentContextSchema = new mongoose.Schema(
       {
         text: { type: String, required: true },
         chunkIndex: { type: Number, required: true },
-        // We'll skip vector embeddings for simplicity - just use text search
+        startWordIndex: { type: Number },
+        endWordIndex: { type: Number },
+        embedding: { type: [Number], default: [] }, // Vector embedding for semantic search
       },
     ],
     totalChunks: { type: Number, default: 0 },
