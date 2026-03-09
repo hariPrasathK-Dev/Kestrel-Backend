@@ -253,9 +253,38 @@ const uploadDocument = asyncHandler(async (req, res) => {
       },
     }));
 
-    // Upsert vectors to Pinecone
-    console.log(`Upserting ${vectors.length} vectors to Pinecone...`);
-    await pineconeIndex.upsert(vectors);
+    // Validate vectors before upserting
+    if (!vectors || vectors.length === 0) {
+      throw new Error("No vectors generated for upload");
+    }
+
+    // Verify vector dimensions
+    const firstVectorDim = vectors[0].values.length;
+    console.log(`Vector dimensions: ${firstVectorDim}, Expected: ${EMBEDDING_DIMENSIONS}`);
+    console.log(`Sample vector values (first 5):`, vectors[0].values.slice(0, 5));
+
+    // Upsert vectors to Pinecone in batches (max 100 per batch)
+    const batchSize = 100;
+    console.log(`Upserting ${vectors.length} vectors to Pinecone in batches...`);
+    
+    for (let i = 0; i < vectors.length; i += batchSize) {
+      const batch = vectors.slice(i, i + batchSize);
+      
+      // Validate batch format
+      if (!batch || batch.length === 0) {
+        console.error(`Empty batch at index ${i}`);
+        continue;
+      }
+
+      try {
+        // Upsert with explicit format
+        await pineconeIndex.upsert(batch);
+        console.log(`  ✓ Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(vectors.length / batchSize)} uploaded (${batch.length} vectors)`);
+      } catch (batchError) {
+        console.error(`  ✗ Batch ${Math.floor(i / batchSize) + 1} failed:`, batchError.message);
+        throw batchError;
+      }
+    }
 
     // Update document status
     document.totalChunks = chunkTexts.length;

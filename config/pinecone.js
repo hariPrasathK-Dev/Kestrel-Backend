@@ -29,9 +29,19 @@ const initPinecone = async () => {
     // Connect to the specified index
     pineconeIndex = pineconeClient.index(process.env.PINECONE_INDEX_NAME);
 
-    console.log(
-      `✅ Pinecone Connected: Index "${process.env.PINECONE_INDEX_NAME}"`,
-    );
+    // Get index stats to verify connection and dimensions
+    try {
+      const stats = await pineconeIndex.describeIndexStats();
+      console.log(
+        `✅ Pinecone Connected: Index "${process.env.PINECONE_INDEX_NAME}"`,
+      );
+      console.log(`   Dimension: ${stats.dimension || 'checking...'}, Total vectors: ${stats.totalRecordCount || 0}`);
+    } catch (statsError) {
+      // Fallback if stats are not available
+      console.log(
+        `✅ Pinecone Connected: Index "${process.env.PINECONE_INDEX_NAME}"`,
+      );
+    }
 
     return pineconeIndex;
   } catch (error) {
