@@ -38,14 +38,20 @@ const generateLocalEmbedding = (input, vocabulary) => {
 
     // Pad or truncate to fixed dimensions
     if (vector.length < EMBEDDING_DIMENSIONS) {
-      vector = [...vector, ...Array(EMBEDDING_DIMENSIONS - vector.length).fill(0)];
+      vector = [
+        ...vector,
+        ...Array(EMBEDDING_DIMENSIONS - vector.length).fill(0),
+      ];
     } else if (vector.length > EMBEDDING_DIMENSIONS) {
       vector = vector.slice(0, EMBEDDING_DIMENSIONS);
     }
 
     // Normalize the vector
-    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-    const normalized = magnitude > 0 ? vector.map((val) => val / magnitude) : vector;
+    const magnitude = Math.sqrt(
+      vector.reduce((sum, val) => sum + val * val, 0),
+    );
+    const normalized =
+      magnitude > 0 ? vector.map((val) => val / magnitude) : vector;
 
     embeddings.push(normalized);
   }
@@ -228,48 +234,44 @@ const uploadDocument = asyncHandler(async (req, res) => {
       if (i + chunkSize >= words.length) break;
     }
 
-    // Build global vocabulary from entire document for consistent embeddings
-    const allText = chunkTexts.join(" ");
-    const globalVocab = [
-      ...new Set(allText.toLowerCase().match(/\b\w+\b/g) || []),
-    ].slice(0, EMBEDDING_DIMENSIONS); // Limit vocabulary to embedding dimensions
+    console.log(
+      `Processing ${chunkTexts.length} chunks for Pinecone inference...`,
+    );
 
-    console.log(`Generating embeddings for ${chunkTexts.length} chunks using local TF-IDF...`);
-    
-    // Generate embeddings locally (no API calls, completely free!)
-    const embeddings = generateLocalEmbedding(chunkTexts, globalVocab);
-
-    // Prepare vectors for Pinecone upsert
+    // Prepare records for Pinecone INFERENCE index (text-based, not vectors!)
+    // Pinecone will generate embeddings using llama-text-embed-v2
     const pineconeIndex = getPineconeIndex();
-    const vectors = chunkTexts.map((text, index) => ({
+    const records = chunkTexts.map((text, index) => ({
       id: `${document._id}_chunk_${index}`,
-      values: embeddings[index],
+      text: text, // Send text, not vectors - Pinecone generates embeddings
       metadata: {
         documentId: document._id.toString(),
         fileName: originalname,
         chunkIndex: index,
-        text: text,
         userId: req.user._id.toString(),
       },
     }));
 
-    // Validate vectors before upserting
-    if (!vectors || vectors.length === 0) {
-      throw new Error("No vectors generated for upload");
+    // Validate records before upserting
+    if (!records || records.length === 0) {
+      throw new Error("No records generated for upload");
     }
 
-    // Verify vector dimensions
-    const firstVectorDim = vectors[0].values.length;
-    console.log(`Vector dimensions: ${firstVectorDim}, Expected: ${EMBEDDING_DIMENSIONS}`);
-    console.log(`Sample vector values (first 5):`, vectors[0].values.slice(0, 5));
+    console.log(`Sample record format:`, {
+      id: records[0].id,
+      text: records[0].text.substring(0, 50) + "...",
+      metadata: records[0].metadata,
+    });
 
-    // Upsert vectors to Pinecone in batches (max 100 per batch)
+    // Upsert records to Pinecone inference index in batches (max 100 per batch)
     const batchSize = 100;
-    console.log(`Upserting ${vectors.length} vectors to Pinecone in batches...`);
-    
-    for (let i = 0; i < vectors.length; i += batchSize) {
-      const batch = vectors.slice(i, i + batchSize);
-      
+    console.log(
+      `Upserting ${records.length} records to Pinecone inference index...`,
+    );
+
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+
       // Validate batch format
       if (!batch || batch.length === 0) {
         console.error(`Empty batch at index ${i}`);
@@ -277,11 +279,16 @@ const uploadDocument = asyncHandler(async (req, res) => {
       }
 
       try {
-        // Upsert with explicit format
+        // Upsert text records - Pinecone will embed them automatically
         await pineconeIndex.upsert(batch);
-        console.log(`  ✓ Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(vectors.length / batchSize)} uploaded (${batch.length} vectors)`);
+        console.log(
+          `  ✓ Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(vectors.length / batchSize)} uploaded (${batch.length} vectors)`,
+        );
       } catch (batchError) {
-        console.error(`  ✗ Batch ${Math.floor(i / batchSize) + 1} failed:`, batchError.message);
+        console.error(
+          `  ✗ Batch ${Math.floor(i / batchSize) + 1} failed:`,
+          batchError.message,
+        );
         throw batchError;
       }
     }
@@ -420,39 +427,32 @@ const askQuestion = asyncHandler(async (req, res) => {
 
     if (document && document.status === "ready") {
       try {
-        // Build vocabulary from document metadata (or use a cached version)
-        // For simplicity, we'll use the question itself to build a basic vocab
-        const questionWords = question.toLowerCase().match(/\b\w+\b/g) || [];
-        const vocab = [...new Set(questionWords)].slice(0, EMBEDDING_DIMENSIONS);
-
-        // Generate embedding for the user's question using local TF-IDF
-        console.log("Generating question embedding locally...");
-        const questionEmbedding = generateLocalEmbedding(question, vocab);
-
-        // Query Pinecone for most relevant chunks
+        // Query Pinecone inference index with text (not vectors!)
         const pineconeIndex = getPineconeIndex();
 
-        // Build query with metadata filter for specific document
-        const queryRequest = {
-          vector: questionEmbedding,
+        console.log(
+          `Querying Pinecone inference index for document ${documentId}...`,
+        );
+
+        // For inference indexes, we can query with the raw question text
+        // Pinecone will generate embeddings on-the-fly
+        const queryResponse = await pineconeIndex.query({
+          data: question, // Send text directly for inference indexes
           topK: 3,
           includeMetadata: true,
           filter: {
             documentId: { $eq: documentId },
           },
-        };
-
-        console.log(`Querying Pinecone for document ${documentId}...`);
-        const queryResponse = await pineconeIndex.query(queryRequest);
+        });
 
         // Extract text from matches
         if (queryResponse.matches && queryResponse.matches.length > 0) {
           const relevantChunks = queryResponse.matches
-            .filter((match) => match.score > 0.5) // Only use chunks with decent similarity
+            .filter((match) => match.score > 0.3) // Lower threshold for inference models
             .map((match) => ({
-              text: match.metadata.text,
+              text: match.metadata?.text || match.text || "", // Text might be in metadata or direct
               score: match.score,
-              chunkIndex: match.metadata.chunkIndex,
+              chunkIndex: match.metadata?.chunkIndex || 0,
             }));
 
           contextText = relevantChunks.map((c) => c.text).join("\n\n");
@@ -470,6 +470,7 @@ const askQuestion = asyncHandler(async (req, res) => {
         }
       } catch (error) {
         console.error("Pinecone query error:", error.message);
+        console.error("Full error:", error);
         // Continue without context if Pinecone query fails
       }
     }

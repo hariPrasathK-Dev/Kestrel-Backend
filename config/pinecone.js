@@ -35,7 +35,9 @@ const initPinecone = async () => {
       console.log(
         `✅ Pinecone Connected: Index "${process.env.PINECONE_INDEX_NAME}"`,
       );
-      console.log(`   Dimension: ${stats.dimension || 'checking...'}, Total vectors: ${stats.totalRecordCount || 0}`);
+      console.log(
+        `   Dimension: ${stats.dimension || "checking..."}, Total vectors: ${stats.totalRecordCount || 0}`,
+      );
     } catch (statsError) {
       // Fallback if stats are not available
       console.log(
