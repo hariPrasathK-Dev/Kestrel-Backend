@@ -259,6 +259,10 @@ const askQuestion = asyncHandler(async (req, res) => {
     });
   }
 
+  // Get user profile for personalized context
+  const User = require("../models/User");
+  const userProfile = await User.findById(req.user._id).select("name role organization bio");
+
   // Build context from document if provided
   let contextText = "";
   if (documentId) {
@@ -284,13 +288,38 @@ const askQuestion = asyncHandler(async (req, res) => {
     }
   }
 
+  // Build personalized system prompt based on user profile
+  const roleExpertise = {
+    admin: "an administrator with full system access and oversight responsibilities",
+    officer: "a conservation officer with field expertise and research coordination duties",
+    user: "a researcher or citizen scientist contributing to biodiversity monitoring"
+  };
+
+  const expertiseLevel = userProfile.role === "admin" || userProfile.role === "officer" 
+    ? "advanced technical knowledge" 
+    : "varying levels of expertise";
+
+  let systemPrompt = `You are an expert biodiversity AI assistant talking to ${userProfile.name}, ${roleExpertise[userProfile.role] || "a biodiversity enthusiast"}.`;
+  
+  if (userProfile.organization) {
+    systemPrompt += ` They work with ${userProfile.organization}.`;
+  }
+  
+  if (userProfile.bio) {
+    systemPrompt += ` User background: ${userProfile.bio}.`;
+  }
+  
+  systemPrompt += ` Tailor your explanations to their ${expertiseLevel} and organizational context. Be precise with scientific terminology when appropriate, but ensure clarity.`;
+
+  if (contextText) {
+    systemPrompt += `\n\nUse the following document context to answer their questions:\n\n${contextText}`;
+  }
+
   // Build messages for Groq API
   const messages = [
     {
       role: "system",
-      content: contextText
-        ? `You are a helpful assistant analyzing biodiversity research documents. Use the following context to answer questions:\n\n${contextText}`
-        : "You are a helpful assistant for biodiversity researchers.",
+      content: systemPrompt,
     },
     ...conversation.messages.slice(-5).map((m) => ({
       role: m.role,
